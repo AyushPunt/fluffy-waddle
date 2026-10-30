@@ -46,6 +46,7 @@ KEYS: dict[str, Any] = {
     "fill_result": None,
     "gate_result": None,
     "flash_error": "",
+    "fill_error": "",
 }
 
 
@@ -91,6 +92,36 @@ def _do_approve(by: str) -> None:
     st.session_state.plan_text = ""
     st.session_state.fill_result = None
     st.session_state.flash_error = ""
+
+
+def _do_fill(agentic: bool, model: str) -> None:
+    """Button callback: optionally draft with the model, then fill. Runs before widgets render,
+    so it may write plan_text (a widget-bound key)."""
+    st.session_state.fill_error = ""
+    m = _approved_manifest()
+    rec, _ = _parse(SystemRecord, st.session_state.record_text, "record")
+    plan, _ = _parse(FillPlan, st.session_state.plan_text, "plan")
+    lib, _ = _parse(BoilerplateLibrary, st.session_state.library_text, "library")
+    kb, _ = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
+    if m is None or rec is None or st.session_state.template_bytes is None:
+        st.session_state.fill_error = "filling needs a template, an approved manifest and a system record"
+        return
+    try:
+        if agentic:
+            if kb is None:
+                st.session_state.fill_error = "drafting needs a knowledge base"
+                return
+            load_dotenv(ROOT / ".env")
+            with st.spinner("Drafting, checking and judging every claim…"):
+                drafted = author(m, rec, kb, AnthropicLLM(model=model))
+            st.session_state.plan_text = drafted.plan.model_dump_json(indent=2)
+            st.session_state.audit = drafted.audit
+            plan = drafted.plan
+        with st.spinner("Splicing regions and running the immutability gate…"):
+            st.session_state.fill_result = fill(st.session_state.template_bytes, m, rec, plan, lib)
+    except DocAgentError as exc:
+        st.session_state.fill_result = None
+        st.session_state.fill_error = str(exc)
 
 
 def _demo_available() -> bool:
@@ -385,29 +416,17 @@ def tab_fill() -> None:
 
     kb, _ = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
     c1, c2, c3 = st.columns([2, 2, 3])
-    agentic = c1.button("Draft with model and fill", disabled=bool(missing) or kb is None, type="primary",
-                        help="Runs the author (draft, check, judge) and then the writer in one go")
-    manual = c2.button("Fill with current plan", disabled=bool(missing),
-                       help="Uses the plan from tab 4 as it is; without a plan, authored regions become gaps")
     model = c3.selectbox("Model for drafting", MODELS, index=0, label_visibility="collapsed")
+    c1.button("Draft with model and fill", disabled=bool(missing) or kb is None, type="primary",
+              help="Runs the author (draft, check, judge) and then the writer in one go",
+              on_click=_do_fill, args=(True, model))
+    c2.button("Fill with current plan", disabled=bool(missing),
+              help="Uses the plan from tab 4 as it is; without a plan, authored regions become gaps",
+              on_click=_do_fill, args=(False, model))
     if kb is None and not missing:
         st.caption("Load a knowledge base in tab 3 to enable drafting.")
-    if agentic or manual:
-        try:
-            if agentic:
-                load_dotenv(ROOT / ".env")
-                with st.spinner("Drafting, checking and judging every claim…"):
-                    drafted = author(m, rec, kb, AnthropicLLM(model=model))
-                st.session_state.plan_text = drafted.plan.model_dump_json(indent=2)
-                st.session_state.audit = drafted.audit
-                plan = drafted.plan
-            with st.spinner("Splicing regions and running the immutability gate…"):
-                result = fill(raw, m, rec, plan, lib)
-            st.session_state.fill_result = result
-            st.rerun()
-        except DocAgentError as exc:
-            st.session_state.fill_result = None
-            st.error(str(exc))
+    if st.session_state.fill_error:
+        st.error(st.session_state.fill_error)
 
     res = st.session_state.fill_result
     if res is None:

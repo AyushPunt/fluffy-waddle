@@ -25,8 +25,9 @@ plugs in by producing a fill plan.
 
 ```bash
 uv sync
-uv run pytest                     # 96 tests
+uv run pytest                     # 100 tests
 uv run python examples/demo.py    # full CLI flow, writes examples/out/
+uv sync --group ui && uv run streamlit run src/docagent/ui.py   # browser UI, see below
 ```
 
 Open `examples/out/csra_filled.docx` in Word to compare it with `examples/out/csra_template.docx`.
@@ -160,7 +161,7 @@ flowchart TD
 
 ### Where each step is tested
 
-`uv run pytest` runs all 96 tests against `tests/fixtures/csra.py`, a Computer System Risk Assessment
+`uv run pytest` runs all 100 tests against `tests/fixtures/csra.py`, a Computer System Risk Assessment
 template built with the hard cases (split-run placeholders, every checkbox form, merged cells, section
 breaks, bookmarks, tracked changes), and `tests/fixtures/kb.py`, a synthetic knowledge base that
 includes another system's documents as a trap. Model calls in tests use a scripted fake LLM.
@@ -174,9 +175,35 @@ includes another system's documents as a trap. Model calls in tests use a script
 | 15 | `gate.py` | `test_gate.py` (8) | any byte outside a region rejected, odd markup inside a region rejected, parts without regions must be identical, reordered parts rejected, a false witness cannot widen the mask |
 | 17-18 | `eval.py` | `test_eval.py` (7) | lower bound matches the design doc, sample sizes for 99%, unlabelled claims block a pass, test split kept separate |
 | 18 | `tests/fixtures/synthetic.py`, `examples/stress_test.py` | `test_synthetic.py` (2) | generator is deterministic and plants its traps, auto-labeller grades against the answer key |
+| 1-3, 12-16 via the browser | `ui.py` | `test_ui.py` (4) | demo loads, approval pins the manifest, fill with and without a plan gives the CLI demo's statuses, a plan for another manifest is flagged, clear resets state |
 
 `examples/demo.py` runs stages 1 and 3 end to end without a key; `examples/demo_llm.py` adds stage 2
 with the real model; `examples/demo_eval.py` runs stage 4 on one case.
+
+## Browser UI
+
+```bash
+uv sync --group ui
+uv run streamlit run src/docagent/ui.py
+```
+
+Opens at http://localhost:8501. The page is the CLI flow as six tabs, in order, with the sidebar showing
+what is loaded and what is still missing. It calls the package API directly; nothing in it bypasses
+manifest approval or the immutability gate.
+
+| Tab | What you do there | Behind it |
+|---|---|---|
+| 1 Template | Upload the approved `.docx`; see every paragraph, heading, checkbox and table the compiler finds | `TemplateDoc` |
+| 2 Regions | Propose regions, edit the manifest JSON (kinds, fact sources, library keys, columns), approve with name and role, download `manifest.json` | `propose`, `approve` |
+| 3 Inputs | Paste or upload the system record, boilerplate library and knowledge base; each is validated and the KB shows how many chunks are usable evidence for the record | pydantic models, `kb.for_system` |
+| 4 Draft | Pick the model and sample count, draft the plan; see claims drafted / verified / gaps per region; edit or hand-write `plan.json`; download the audit | `author`, `AnthropicLLM` |
+| 5 Fill | Fill the document; see region statuses, gap markers, blocking items and awaiting-human regions; download the filled `.docx` and `report.json` | `fill`, `run_gate` |
+| 6 Gate | Upload any earlier output and re-run the gate against the loaded template and manifest, with its report as witness | `run_gate` |
+
+**Load demo (CSRA template)** in the sidebar fills every input from the test fixtures so the whole flow
+can be tried without customer data. Drafting needs Anthropic credentials, read from `.env` or
+`ANTHROPIC_API_KEY`; every other tab works offline. `tests/test_ui.py` drives the page headlessly
+through `streamlit.testing` and checks that the UI produces the same region statuses as the CLI demo.
 
 ## Workflow
 
@@ -312,6 +339,7 @@ src/docagent/
   author.py          grounded drafting: draft, check, judge, plan + audit
   eval.py            golden set, SME labels, precision with 95% lower bound
   cli.py
+  ui.py              Streamlit page over the same API (optional `ui` dependency group)
 tests/fixtures/csra.py   a Computer System Risk Assessment template with the hard cases
 tests/fixtures/kb.py     synthetic past documents, plus another system's
 ```

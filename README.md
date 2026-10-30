@@ -187,7 +187,7 @@ uv sync --group ui
 uv run streamlit run src/docagent/ui.py
 ```
 
-Opens at http://localhost:8501. The page is the CLI flow as six tabs, in order, with the sidebar showing
+Opens at http://localhost:8501. The page is the CLI flow as five tabs, in order, with the sidebar showing
 what is loaded and what is still missing. It calls the package API directly; nothing in it bypasses
 manifest approval or the immutability gate.
 
@@ -196,13 +196,12 @@ manifest approval or the immutability gate.
 | 1 Template | Upload the approved `.docx`; see every paragraph, heading, checkbox and table the compiler finds | `TemplateDoc` |
 | 2 Regions | Propose regions, edit the manifest JSON (kinds, fact sources, library keys, columns), approve with name and role, download `manifest.json` | `propose`, `approve` |
 | 3 Inputs | Paste or upload the system record, boilerplate library and knowledge base; each is validated and the KB shows how many chunks are usable evidence for the record | pydantic models, `kb.for_system` |
-| 4 Draft | Pick the model and sample count, draft the plan; see claims drafted / verified / gaps per region; edit or hand-write `plan.json`; download the audit | `author`, `AnthropicLLM` |
-| 5 Fill | **Draft with model and fill** runs the author and the writer in one go; **Fill with current plan** uses the plan from tab 4 as it is. Either way: region statuses, gap markers, blocking items, awaiting-human regions, and the filled `.docx` plus `report.json` to download | `author`, `fill`, `run_gate` |
-| 6 Gate | Upload any earlier output and re-run the gate against the loaded template and manifest, with its report as witness | `run_gate` |
+| 4 Fill | **Fill document** drafts every authored region with the model (claims checked in code and by a judge), then fills and runs the gate; untick *Draft with the model* to fill with the plan as it is. Shows region statuses, gap markers, blocking items, awaiting-human regions; download the filled `.docx` and `report.json`. An expander holds the audit and the plan JSON to edit, upload or download | `author`, `AnthropicLLM`, `fill`, `run_gate` |
+| 5 Gate | Upload any earlier output and re-run the gate against the loaded template and manifest, with its report as witness | `run_gate` |
 
 **Load demo (CSRA template)** in the sidebar fills every input from the test fixtures so the whole flow
 can be tried without customer data. Drafting needs Anthropic credentials, read from `.env` or
-`ANTHROPIC_API_KEY`; every other tab works offline. `tests/test_ui.py` drives the page headlessly
+`ANTHROPIC_API_KEY`; with the model toggle off, everything works offline. `tests/test_ui.py` drives the page headlessly
 through `streamlit.testing` and checks that the UI produces the same region statuses as the CLI demo.
 
 ## Workflow

@@ -2,8 +2,8 @@
 
     uv run streamlit run src/docagent/ui.py
 
-The page walks the same four stages as the CLI: approve a template, provide the
-inputs, draft a plan with the model, fill and verify. It calls the package API
+The page walks the CLI flow: approve a template, provide the inputs, fill (the
+model drafts a plan, code verifies and writes), gate. It calls the package API
 directly; nothing here bypasses the manifest approval or the immutability gate.
 """
 
@@ -207,7 +207,7 @@ def _sidebar() -> None:
         ("System record", rec is not None, rec.record_id if rec else ""),
         ("Boilerplate library", lib is not None, f"{len(lib.entries)} entries" if lib else "optional"),
         ("Knowledge base", kb is not None, f"{len(kb.chunks)} chunks" if kb else "needed for drafting"),
-        ("Fill plan", plan is not None, f"{len(plan.regions)} regions" if plan else "optional"),
+        ("Fill plan", plan is not None, f"{len(plan.regions)} regions" if plan else "drafted on fill"),
         ("Filled output", st.session_state.fill_result is not None,
          "gate passed" if st.session_state.fill_result else ""),
     ]
@@ -345,126 +345,93 @@ def tab_inputs() -> None:
                            + ("" if rec else " (load a record to scope)"))
 
 
-def tab_author() -> None:
-    st.subheader("4 · Draft with the model")
-    m = _approved_manifest()
-    rec, rerr = _parse(SystemRecord, st.session_state.record_text, "record")
-    kb, kerr = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
-    missing = [x for x, ok in [("an approved manifest", m), ("a system record", rec), ("a knowledge base", kb)] if not ok]
-    if missing:
-        st.info("Drafting needs " + ", ".join(missing) + ".")
-    c1, c2, c3 = st.columns([2, 1, 1])
-    model = c1.selectbox("Model", MODELS, index=0)
-    samples = c2.number_input("Samples per single choice", 1, 7, 3)
-    load_dotenv(ROOT / ".env")
-    if c3.button("Draft plan", disabled=bool(missing), type="primary"):
-        try:
-            with st.spinner("Drafting, checking and judging every claim…"):
-                result = author(m, rec, kb, AnthropicLLM(model=model), samples=int(samples))
-            st.session_state.plan_text = result.plan.model_dump_json(indent=2)
-            st.session_state.audit = result.audit
-            st.session_state.fill_result = None
-            st.rerun()
-        except DocAgentError as exc:
-            st.error(str(exc))
-
-    audit = st.session_state.audit
-    if audit:
-        s = audit["summary"]
-        a, b, c = st.columns(3)
-        a.metric("Claims drafted", s["claims"])
-        b.metric("Verified", s["accepted"])
-        c.metric("Gaps declared by the model", s["declared_gaps"])
-        rows = [{
-            "region": r["region"], "kind": r["kind"],
-            "verified": f"{sum(1 for c in r['claims'] if c['accepted'])}/{len(r['claims'])}",
-            "calls": len(r["calls"]), "note": r["note"] or "",
-        } for r in audit["regions"]]
-        st.dataframe(rows, width="stretch")
-        st.download_button("Download plan.audit.json", json.dumps(audit, indent=2), "plan.audit.json",
-                           "application/json")
-
-    st.markdown("**Fill plan** (drafted by the model, or written by hand)")
-    _upload_json("plan_text", "Plan JSON")
-    _json_editor("plan_text", "plan.json")
-    plan, err = _parse(FillPlan, st.session_state.plan_text, "plan")
-    if st.session_state.plan_text:
-        if err:
-            st.error(err)
-        elif m and plan.manifest_sha256 != m.approval.manifest_sha256:
-            st.error("This plan was made for a different manifest version; the writer will refuse it.")
-        else:
-            st.success(f"Plan covers {len(plan.regions)} region(s)")
-            st.download_button("Download plan.json", st.session_state.plan_text, "plan.json", "application/json")
-
-
 def tab_fill() -> None:
-    st.subheader("5 · Fill and verify")
+    st.subheader("4 · Fill")
+    st.write("One step: the model drafts every authored region from the knowledge base, each claim is "
+             "checked in code and by a judge, and the writer fills the template and runs the immutability gate.")
     raw = st.session_state.template_bytes
     m = _approved_manifest()
     rec, _ = _parse(SystemRecord, st.session_state.record_text, "record")
-    plan, perr = _parse(FillPlan, st.session_state.plan_text, "plan")
+    kb, _ = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
     lib, lerr = _parse(BoilerplateLibrary, st.session_state.library_text, "library")
     missing = [x for x, ok in [("a template", raw), ("an approved manifest", m), ("a system record", rec)] if not ok]
     if missing:
-        st.info("Filling needs " + ", ".join(missing) + ". A plan and a library are optional: without them "
-                "every authored region becomes a gap or a blocking item.")
-    if st.session_state.plan_text and perr:
-        st.warning(perr)
+        st.info("Filling needs " + ", ".join(missing) + ".")
     if st.session_state.library_text and lerr:
         st.warning(lerr)
 
-    kb, _ = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
-    c1, c2, c3 = st.columns([2, 2, 3])
-    model = c3.selectbox("Model for drafting", MODELS, index=0, label_visibility="collapsed")
-    c1.button("Draft with model and fill", disabled=bool(missing) or kb is None, type="primary",
-              help="Runs the author (draft, check, judge) and then the writer in one go",
-              on_click=_do_fill, args=(True, model))
-    c2.button("Fill with current plan", disabled=bool(missing),
-              help="Uses the plan from tab 4 as it is; without a plan, authored regions become gaps",
-              on_click=_do_fill, args=(False, model))
+    c1, c2, c3 = st.columns([2, 2, 2])
+    use_model = c2.checkbox("Draft with the model", value=kb is not None, disabled=kb is None,
+                            help="Needs a knowledge base (tab 3) and Anthropic credentials in .env. "
+                                 "Off: the plan below is used as it is; without one, authored regions become gaps.")
+    model = c3.selectbox("Model", MODELS, index=0, disabled=not use_model)
+    c1.button("Fill document", disabled=bool(missing), type="primary", on_click=_do_fill, args=(use_model, model))
     if kb is None and not missing:
-        st.caption("Load a knowledge base in tab 3 to enable drafting.")
+        st.caption("No knowledge base loaded, so the model is skipped and only facts and boilerplate are filled.")
     if st.session_state.fill_error:
         st.error(st.session_state.fill_error)
 
     res = st.session_state.fill_result
-    if res is None:
-        return
-    r = res.report
-    st.success("Immutability gate passed. Every byte outside the approved regions is identical to the template.")
-    if st.session_state.audit:
-        sm = st.session_state.audit["summary"]
-        st.caption(f"Model draft: {sm['accepted']}/{sm['claims']} claims verified, "
-                   f"{sm['declared_gaps']} gaps declared by the model. Details and the plan are in tab 4.")
-    a, b, c, d = st.columns(4)
-    a.metric("Regions", len(r["regions"]))
-    b.metric("Gaps", len(r["gaps"]))
-    c.metric("Blocking items", len(r["blocking"]))
-    d.metric("Awaiting human", len(r["awaiting_human"]))
-    out_name = Path(st.session_state.template_name).stem + "_filled.docx"
-    c1, c2 = st.columns(2)
-    c1.download_button("Download " + out_name, res.output, out_name,
-                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary")
-    c2.download_button("Download report.json", json.dumps(r, indent=2, ensure_ascii=False),
-                       out_name.replace(".docx", ".report.json"), "application/json")
+    if res is not None:
+        r = res.report
+        st.success("Immutability gate passed. Every byte outside the approved regions is identical to the template.")
+        audit = st.session_state.audit
+        if audit:
+            sm = audit["summary"]
+            st.caption(f"Model draft: {sm['accepted']}/{sm['claims']} claims verified, "
+                       f"{sm['declared_gaps']} gaps declared by the model.")
+        a, b, c, d = st.columns(4)
+        a.metric("Regions", len(r["regions"]))
+        b.metric("Gaps", len(r["gaps"]))
+        c.metric("Blocking items", len(r["blocking"]))
+        d.metric("Awaiting human", len(r["awaiting_human"]))
+        out_name = Path(st.session_state.template_name).stem + "_filled.docx"
+        c1, c2 = st.columns(2)
+        c1.download_button("Download " + out_name, res.output, out_name,
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary")
+        c2.download_button("Download report.json", json.dumps(r, indent=2, ensure_ascii=False),
+                           out_name.replace(".docx", ".report.json"), "application/json")
 
-    st.markdown("**Regions**")
-    st.dataframe([{"id": x["id"], "kind": x["kind"], "status": x["status"],
-                   "gaps": ", ".join(f"GAP-{n}" for n in x["gaps"]), "blocking": "; ".join(x["blocking"])}
-                  for x in r["regions"]], width="stretch")
-    if r["gaps"]:
-        st.markdown("**Gap markers** (SME input required)")
-        st.dataframe(r["gaps"], width="stretch")
-    if r["blocking"]:
-        st.markdown("**Blocking items** (sign-off is blocked until decided)")
-        st.dataframe(r["blocking"], width="stretch")
-    with st.expander("Full report"):
-        st.json(r)
+        st.markdown("**Regions**")
+        st.dataframe([{"id": x["id"], "kind": x["kind"], "status": x["status"],
+                       "gaps": ", ".join(f"GAP-{n}" for n in x["gaps"]), "blocking": "; ".join(x["blocking"])}
+                      for x in r["regions"]], width="stretch")
+        if r["gaps"]:
+            st.markdown("**Gap markers** (SME input required)")
+            st.dataframe(r["gaps"], width="stretch")
+        if r["blocking"]:
+            st.markdown("**Blocking items** (sign-off is blocked until decided)")
+            st.dataframe(r["blocking"], width="stretch")
+        with st.expander("Full report"):
+            st.json(r)
+
+    with st.expander("Plan and audit (what the model drafted; edit or upload a plan by hand)"):
+        audit = st.session_state.audit
+        if audit:
+            rows = [{
+                "region": x["region"], "kind": x["kind"],
+                "verified": f"{sum(1 for c in x['claims'] if c['accepted'])}/{len(x['claims'])}",
+                "calls": len(x["calls"]), "note": x["note"] or "",
+            } for x in audit["regions"]]
+            st.dataframe(rows, width="stretch")
+            st.download_button("Download plan.audit.json", json.dumps(audit, indent=2), "plan.audit.json",
+                               "application/json")
+        _upload_json("plan_text", "Plan JSON")
+        _json_editor("plan_text", "plan.json")
+        plan, err = _parse(FillPlan, st.session_state.plan_text, "plan")
+        if st.session_state.plan_text:
+            if err:
+                st.error(err)
+            elif m and plan.manifest_sha256 != m.approval.manifest_sha256:
+                st.error("This plan was made for a different manifest version; the writer will refuse it.")
+            else:
+                st.success(f"Plan covers {len(plan.regions)} region(s). Turn off \"Draft with the model\" to fill "
+                           "with this plan as it is.")
+                st.download_button("Download plan.json", st.session_state.plan_text, "plan.json", "application/json")
 
 
 def tab_gate() -> None:
-    st.subheader("6 · Gate any output")
+    st.subheader("5 · Gate any output")
     st.write("Re-run the immutability gate on a document produced earlier, against the loaded template and "
              "approved manifest. This is what a reviewer runs before sign-off.")
     raw = st.session_state.template_bytes
@@ -504,7 +471,7 @@ def main() -> None:
     _init()
     _sidebar()
     st.title("Regulated document authoring")
-    tabs = st.tabs(["1 Template", "2 Regions", "3 Inputs", "4 Draft", "5 Fill", "6 Gate"])
+    tabs = st.tabs(["1 Template", "2 Regions", "3 Inputs", "4 Fill", "5 Gate"])
     with tabs[0]:
         tab_template()
     with tabs[1]:
@@ -512,10 +479,8 @@ def main() -> None:
     with tabs[2]:
         tab_inputs()
     with tabs[3]:
-        tab_author()
-    with tabs[4]:
         tab_fill()
-    with tabs[5]:
+    with tabs[4]:
         tab_gate()
 
 

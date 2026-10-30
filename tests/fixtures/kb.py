@@ -1,4 +1,4 @@
-"""Synthetic, already de-identified past documents for the demo systems.
+"""Synthetic past documents for the demo systems.
 
 SYS-0042 (LabTrack LIMS) is the target. SYS-0017 (ChromaVault CDS) is a different
 system whose chunks must never support a claim about SYS-0042: it states things
@@ -11,7 +11,7 @@ from docagent.kb import Chunk, KnowledgeBase
 
 def _c(chunk_id, system_id, doc_type, title, section, text, version="1.0", status="approved") -> Chunk:
     return Chunk(chunk_id=chunk_id, system_id=system_id, doc_type=doc_type, doc_title=title, doc_version=version,
-                 status=status, section=section, text=text, deidentified=True)
+                 status=status, section=section, text=text)
 
 
 URS = "User Requirements Specification, LabTrack LIMS v4"

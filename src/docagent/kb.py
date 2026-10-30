@@ -1,8 +1,7 @@
-"""Knowledge base of de-identified chunks from a customer's past validation documents.
+"""Knowledge base of chunks from a customer's past validation documents.
 
-Phase 2 (quarantine store and layered de-identification) will be the only writer
-of this store. Until then the loader accepts only chunks that carry the
-`deidentified: true` attestation, which fixtures set explicitly.
+Only chunks whose system_id matches the target and whose status is approved
+become evidence; everything else is listed in the audit as excluded.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ class Chunk(BaseModel):
     status: Literal["approved", "superseded", "draft"]  # only approved documents become evidence
     section: str
     text: str
-    deidentified: Literal[True]
 
 
 class KnowledgeBase(BaseModel):

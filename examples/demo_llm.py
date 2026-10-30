@@ -2,8 +2,8 @@
 
     uv run python examples/demo_llm.py
 
-Needs Anthropic credentials (`ant auth login` or ANTHROPIC_API_KEY). Only the synthetic,
-de-identified demo knowledge base in tests/fixtures/kb.py is sent to the model.
+Needs Anthropic credentials (`ant auth login` or ANTHROPIC_API_KEY). Only the synthetic
+demo knowledge base in tests/fixtures/kb.py is sent to the model.
 Run examples/demo.py first; this reuses its approved manifest, record and library.
 """
 

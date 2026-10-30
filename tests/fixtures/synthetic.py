@@ -83,7 +83,7 @@ class SynthCase:
 
 def _chunk(cid, system_id, doc_type, title, version, section, text, status="approved") -> Chunk:
     return Chunk(chunk_id=cid, system_id=system_id, doc_type=doc_type, doc_title=title, doc_version=version,
-                 status=status, section=section, text=text, deidentified=True)
+                 status=status, section=section, text=text)
 
 
 def make_case(i: int, rng: random.Random) -> SynthCase:

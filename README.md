@@ -50,7 +50,7 @@ flowchart TD
     end
 
     subgraph B["Stage 2 · Draft the plan with the model  (per document)"]
-        KB[(kb.json<br/>de-identified past docs)] --> SC["scope evidence<br/>kb.for_system: same system_id AND status=approved"]
+        KB[(kb.json<br/>past documents, chunked)] --> SC["scope evidence<br/>kb.for_system: same system_id AND status=approved"]
         REC[record.json<br/>system record] --> MK["mask record values<br/>kb.mask_record_values → #123;#123;system.*#125;#125; tokens"]
         SC --> MK
         M --> AU
@@ -253,8 +253,7 @@ Put the key in `.env` (copy `.env.example`; it is gitignored) or export `ANTHROP
    IDs, quote hashes and each check's result. No prompt, quote or output text is stored.
 
 The model is pinned (`claude-opus-5-5` by default) and there is no automatic fallback to another model:
-a refusal leaves the region for the writer to gap. Phase 2 (de-identification) will be the only writer
-of the knowledge base; until then the loader accepts only chunks marked `deidentified: true`.
+a refusal leaves the region for the writer to gap.
 
 ## Proving 99%: the golden-set loop
 
@@ -314,7 +313,7 @@ src/docagent/
   eval.py            golden set, SME labels, precision with 95% lower bound
   cli.py
 tests/fixtures/csra.py   a Computer System Risk Assessment template with the hard cases
-tests/fixtures/kb.py     synthetic de-identified past documents, plus another system's
+tests/fixtures/kb.py     synthetic past documents, plus another system's
 ```
 
 ## Not yet supported

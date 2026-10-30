@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("author", help="draft a fill plan with the model, verifying every claim")
     s.add_argument("--manifest", required=True)
     s.add_argument("--record", required=True)
-    s.add_argument("--kb", required=True, help="de-identified knowledge base (JSON)")
+    s.add_argument("--kb", required=True, help="knowledge base of past documents (JSON)")
     s.add_argument("-o", "--output", required=True)
     s.add_argument("--audit")
     s.add_argument("--model", default=DEFAULT_MODEL)

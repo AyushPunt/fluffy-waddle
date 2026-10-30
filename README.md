@@ -344,17 +344,4 @@ tests/fixtures/csra.py   a Computer System Risk Assessment template with the har
 tests/fixtures/kb.py     synthetic past documents, plus another system's
 ```
 
-## Not yet supported
 
-These are refused or reported as warnings rather than handled:
-
-- Content controls and bookmarks as anchors (open question 2 in the design doc). Plain-text placeholders,
-  tables and checkboxes work now.
-- Checkbox content controls that wrap whole paragraphs, and Wingdings `w:sym` checkboxes.
-- Templates with unaccepted tracked changes, Strict OOXML, ZIP64 or encrypted packages.
-- Placeholders in footnotes, endnotes, comments and text boxes.
-
-## Phase 1 exit gate
-
-The gate already blocks any masked-diff byte. The remaining exit criterion is to run real customer
-templates through and confirm that Word opens every output without repair.

@@ -25,11 +25,158 @@ plugs in by producing a fill plan.
 
 ```bash
 uv sync
-uv run pytest                     # 95 tests
+uv run pytest                     # 96 tests
 uv run python examples/demo.py    # full CLI flow, writes examples/out/
 ```
 
 Open `examples/out/csra_filled.docx` in Word to compare it with `examples/out/csra_template.docx`.
+
+## How a document gets filled, end to end
+
+Three roles, three artefacts. The **template owner** approves *where* the agent may write (the manifest).
+The **model** proposes *what* to write, as cited claims that code verifies (the fill plan). **Code** does
+the writing, binds facts, and proves the template is untouched (the output and its report). No stage
+may skip the one before it: `fill` refuses a plan made for a different manifest, and `author` refuses
+an unapproved or edited manifest.
+
+```mermaid
+flowchart TD
+    subgraph A["Stage 1 · Approve the template  (once per template version)"]
+        T[template.docx] --> I["docagent inspect / propose<br/>compiler.propose"]
+        I --> M0["manifest.json (draft)<br/>regions: kind, anchor, mutation"]
+        M0 --> R["template owner reviews<br/>kinds, fact sources, library keys, columns"]
+        R --> AP["docagent approve<br/>compiler.approve"]
+        AP --> M["manifest.json (approved)<br/>pins file + part SHA-256, byte spans, context hash"]
+    end
+
+    subgraph B["Stage 2 · Draft the plan with the model  (per document)"]
+        KB[(kb.json<br/>de-identified past docs)] --> SC["scope evidence<br/>kb.for_system: same system_id AND status=approved"]
+        REC[record.json<br/>system record] --> MK["mask record values<br/>kb.mask_record_values → #123;#123;system.*#125;#125; tokens"]
+        SC --> MK
+        M --> AU
+        MK --> AU["docagent author · one call per region<br/>author.Author: prose / rows / multi_select / single_choice"]
+        AU --> CL["claims: text + chunk_id + verbatim quote<br/>or declared gap items"]
+        CL --> V1["check 1-3 in code · verify.check_claim<br/>quote ⊂ cited chunk · chunk is target system's<br/>every number / acronym / name in claim ⊂ quote"]
+        V1 -->|fails| GAP1["claim → #123;#123;GAP: topic (no verified evidence)#125;#125;<br/>checklist item → unknown"]
+        V1 -->|passes| J["judge call · JUDGE_RULES<br/>does the quote entail the whole claim?"]
+        J -->|no| GAP1
+        J -->|yes| OK[accepted claim]
+        AU --> S3["single_choice: 3 samples must agree<br/>+ one verified citation, else choice = null"]
+        OK --> P["plan.json<br/>manifest_sha256 + per-region values"]
+        GAP1 --> P
+        S3 --> P
+        AU --> AUD["plan.audit.json<br/>model, request IDs, prompt/output hashes,<br/>cited chunk IDs, quote hashes, every check result"]
+    end
+
+    subgraph C["Stage 3 · Write the document  (code only, no model)"]
+        P --> F
+        M --> F
+        REC --> F
+        LIB[(library.json<br/>approved boilerplate)] --> F
+        F["docagent fill · writer.fill"] --> RS["compiler.load_approved<br/>re-resolve every region on the template bytes;<br/>refuse if any hash or span differs"]
+        RS --> FK{"per region kind<br/>writer._Filler"}
+        FK -->|fact| FF["copy value from system record<br/>missing → numbered GAP marker, highlighted"]
+        FK -->|boilerplate| FB["copy library entry<br/>entry hash must equal pinned hash"]
+        FK -->|prose / table_rows| FP["plan text, tokens only<br/>#123;#123;system.*#125;#125; bound late from the record<br/>#123;#123;GAP: …#125;#125; numbered by the writer"]
+        FK -->|single_choice / multi_select| FC["flip checkbox state in place<br/>unknown → left as-is + blocking item"]
+        FK -->|human_only| FH["untouched, listed as awaiting human"]
+        FF & FB & FP & FC & FH --> SP["render.py emits the only new XML;<br/>splice bytes into approved spans;<br/>package.rebuild copies every other ZIP record raw"]
+        SP --> G["immutability gate · gate.run_gate<br/>every byte outside masked spans identical;<br/>fragments contain only allowed markup;<br/>tables, grids, merges, checkboxes, sections, fields compared"]
+        G -->|fails| X["GateError: no output written"]
+        G -->|passes| OUT["draft.docx + draft.report.json<br/>status draft_for_review; hashes, gaps,<br/>blocking items, awaiting-human regions"]
+    end
+
+    subgraph D["Stage 4 · Prove precision  (golden-set loop)"]
+        OUT -.-> L["docagent label · eval.export_labels<br/>one line per claim with text, SMEs mark true/false"]
+        L --> E["docagent evaluate · eval.evaluate<br/>Clopper-Pearson 95% lower bound per region kind<br/>tune split → fix, test split → verdict"]
+        ST["examples/stress_test.py<br/>15 synthetic systems with traps,<br/>auto-graded against an answer key"] -.-> E
+    end
+```
+
+### The steps, in order
+
+**Stage 1, approve the template.** Run once per template version; the output is the manifest.
+
+1. `inspect` / `propose` (`compiler.propose`) read `document.xml` and header/footer parts through the
+   expat index (`ooxml/xmlindex.py`) and list every placeholder, heading, table and checkbox with exact
+   byte spans. Placeholders split across runs are read as one string (`ooxml/wordml.py`).
+2. The template owner edits the proposed `manifest.json`: sets each region's kind, the system-record
+   field a `fact` reads, the library key a `boilerplate` region copies, the columns of a `table_rows` region.
+3. `approve` (`compiler.approve`) resolves every anchor on the template bytes, refuses overlaps, regions
+   inside human-only tables, ambiguous placeholders and hidden formatting, then pins the template's
+   SHA-256, each part's SHA-256, each region's spans and a context hash, plus who approved it and when.
+   Any later edit to the manifest or the template fails the hash check.
+
+**Stage 2, draft the plan.** Runs per document, only for `prose`, `table_rows`, `single_choice` and
+`multi_select` regions; `fact`, `boilerplate` and `human_only` never see a model.
+
+4. Evidence is scoped (`kb.for_system`): only chunks whose `system_id` equals the record's ID **and**
+   whose status is `approved`. Drafts and superseded documents are excluded and listed in the audit.
+5. Record values are masked (`kb.mask_record_values`): every system-record value inside the evidence
+   becomes a `{{system.*}}` token before the model sees it, so the model copies tokens and cannot
+   mistype a version or ID. The evidence block is cached across the region calls.
+6. `author` makes one JSON-schema call per region (`author.Author`). Every claim item carries the
+   sentence, a `chunk_id` and a verbatim quote; anything unsupported is returned as a gap item.
+7. Checks 1-3 run in code (`verify.check_claim`): the quote is in the cited chunk, the chunk belongs to
+   the target system, and every number, acronym and proper name in the claim appears in the quote.
+8. Claims that pass go to one judge call per region: does the quote entail the whole claim? A "no"
+   decision on a checklist item may cite evidence that states something else, so the judge decides those.
+9. Any failure rewrites the claim as `{{GAP: topic (no verified evidence)}}`; a de-identification
+   surrogate in the text becomes `{{GAP: … (de-identified detail)}}`; a checklist item becomes `unknown`.
+10. A `single_choice` region is sampled three times. All samples must agree on a non-unknown option and
+    the first citation must pass steps 7-8; otherwise the choice is `null` and the writer blocks sign-off.
+11. Output: `plan.json` (bound to the approved manifest hash) and `plan.audit.json` (model, request
+    IDs, prompt and output hashes, cited chunk IDs, quote hashes, each check's result, excluded chunks).
+    No prompt, quote or output text is stored. A refusal or missing evidence leaves the region out of
+    the plan, which the writer turns into a gap.
+
+**Stage 3, write the document.** Pure code; the same path runs with or without a plan.
+
+12. `fill` (`writer.fill`) loads the approved manifest and re-resolves every region on the template
+    bytes (`compiler.load_approved`). It refuses a plan whose `manifest_sha256` differs, a plan that
+    names an unknown region, or a plan that names a `fact`, `boilerplate` or `human_only` region.
+13. Each region is filled by kind (`writer._Filler`): facts are copied from the system record,
+    boilerplate from the library after a hash check, prose and rows from the plan with `{{system.*}}`
+    bound late and `{{GAP: …}}` numbered, checkboxes flipped in place, human-only regions untouched.
+    A missing fact becomes a highlighted `[GAP-n: … — SME input required]`; an unknown checklist item
+    is left as it was and recorded as a blocking item.
+14. `render.py` emits the only new XML. The writer splices it into the approved byte spans and
+    `package.rebuild` copies every other ZIP entry as its raw record, compressed bytes included.
+15. The immutability gate (`gate.run_gate`) re-resolves the manifest on the template, proves every
+    byte outside the masked spans is identical, checks each fragment for markup its mutation does not
+    allow, and compares tables, grids, merged cells, checkbox count and option text, section breaks and
+    fields. There is no override: a failure raises and nothing is written.
+16. Output: `draft.docx` and `draft.report.json` (template, manifest, record, plan and output hashes,
+    per-region status `filled` / `gap` / `blocked` / `awaiting_human`, numbered gaps, blocking items,
+    gate result). `docagent gate` re-runs step 15 on any output at any later time.
+
+**Stage 4, prove 99%.** See [Proving 99%](#proving-99-the-golden-set-loop) for the numbers.
+
+17. `label` runs the golden set through stage 2 and exports one line per claim, with text, for SMEs.
+18. `evaluate` computes claim-level precision with a one-sided 95% Clopper-Pearson lower bound per
+    region kind, on the tune split while fixing and once on the test split for the verdict. Each error
+    becomes a new deterministic check or prompt rule. `examples/stress_test.py` runs the same loop on
+    15 synthetic systems with traps, graded automatically against an answer key.
+
+### Where each step is tested
+
+`uv run pytest` runs all 96 tests against `tests/fixtures/csra.py`, a Computer System Risk Assessment
+template built with the hard cases (split-run placeholders, every checkbox form, merged cells, section
+breaks, bookmarks, tracked changes), and `tests/fixtures/kb.py`, a synthetic knowledge base that
+includes another system's documents as a trap. Model calls in tests use a scripted fake LLM.
+
+| Steps | Module | Tests | What they prove |
+|---|---|---|---|
+| 1 | `ooxml/package.py`, `ooxml/xmlindex.py`, `ooxml/wordml.py` | `test_package.py` (6), `test_wordml.py` (8) | raw ZIP copy is byte-identical, spans slice exact elements, split runs read as one string, all three checkbox forms found, tracked changes and DOCTYPE refused |
+| 1-3 | `compiler.py`, `manifest.py` | `test_compiler.py` (11) | proposal finds every kind, approval pins spans and hashes, edits after approval and revised templates refused, overlaps / ambiguity / hidden formatting refused |
+| 4-11 | `kb.py`, `verify.py`, `author.py`, `llm.py` | `test_author.py` (13) | record values masked before the model, unsourced terms caught, bad claims become gaps, audit records why, checklist answers need citations, single choice needs agreeing samples, refusal and no-evidence paths, unapproved manifest refused, a drafted plan fills and passes the gate |
+| 12-14, 16 | `writer.py`, `plan.py`, `render.py` | `test_writer.py` (15) | every region reads back filled, report lists gaps / blockers / human regions, checkbox flipped in place, split-run placeholder keeps every run, gap markers highlighted, bad or foreign plans refused, tampered boilerplate refused, output deterministic, special characters survive |
+| 15 | `gate.py` | `test_gate.py` (8) | any byte outside a region rejected, odd markup inside a region rejected, parts without regions must be identical, reordered parts rejected, a false witness cannot widen the mask |
+| 17-18 | `eval.py` | `test_eval.py` (7) | lower bound matches the design doc, sample sizes for 99%, unlabelled claims block a pass, test split kept separate |
+| 18 | `tests/fixtures/synthetic.py`, `examples/stress_test.py` | `test_synthetic.py` (2) | generator is deterministic and plants its traps, auto-labeller grades against the answer key |
+
+`examples/demo.py` runs stages 1 and 3 end to end without a key; `examples/demo_llm.py` adds stage 2
+with the real model; `examples/demo_eval.py` runs stage 4 on one case.
 
 ## Workflow
 

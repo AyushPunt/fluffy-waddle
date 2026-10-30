@@ -197,7 +197,7 @@ manifest approval or the immutability gate.
 | 2 Regions | Propose regions, edit the manifest JSON (kinds, fact sources, library keys, columns), approve with name and role, download `manifest.json` | `propose`, `approve` |
 | 3 Inputs | Paste or upload the system record, boilerplate library and knowledge base; each is validated and the KB shows how many chunks are usable evidence for the record | pydantic models, `kb.for_system` |
 | 4 Draft | Pick the model and sample count, draft the plan; see claims drafted / verified / gaps per region; edit or hand-write `plan.json`; download the audit | `author`, `AnthropicLLM` |
-| 5 Fill | Fill the document; see region statuses, gap markers, blocking items and awaiting-human regions; download the filled `.docx` and `report.json` | `fill`, `run_gate` |
+| 5 Fill | **Draft with model and fill** runs the author and the writer in one go; **Fill with current plan** uses the plan from tab 4 as it is. Either way: region statuses, gap markers, blocking items, awaiting-human regions, and the filled `.docx` plus `report.json` to download | `author`, `fill`, `run_gate` |
 | 6 Gate | Upload any earlier output and re-run the gate against the loaded template and manifest, with its report as witness | `run_gate` |
 
 **Load demo (CSRA template)** in the sidebar fills every input from the test fixtures so the whole flow

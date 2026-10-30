@@ -383,8 +383,24 @@ def tab_fill() -> None:
     if st.session_state.library_text and lerr:
         st.warning(lerr)
 
-    if st.button("Fill document", disabled=bool(missing), type="primary"):
+    kb, _ = _parse(KnowledgeBase, st.session_state.kb_text, "kb")
+    c1, c2, c3 = st.columns([2, 2, 3])
+    agentic = c1.button("Draft with model and fill", disabled=bool(missing) or kb is None, type="primary",
+                        help="Runs the author (draft, check, judge) and then the writer in one go")
+    manual = c2.button("Fill with current plan", disabled=bool(missing),
+                       help="Uses the plan from tab 4 as it is; without a plan, authored regions become gaps")
+    model = c3.selectbox("Model for drafting", MODELS, index=0, label_visibility="collapsed")
+    if kb is None and not missing:
+        st.caption("Load a knowledge base in tab 3 to enable drafting.")
+    if agentic or manual:
         try:
+            if agentic:
+                load_dotenv(ROOT / ".env")
+                with st.spinner("Drafting, checking and judging every claim…"):
+                    drafted = author(m, rec, kb, AnthropicLLM(model=model))
+                st.session_state.plan_text = drafted.plan.model_dump_json(indent=2)
+                st.session_state.audit = drafted.audit
+                plan = drafted.plan
             with st.spinner("Splicing regions and running the immutability gate…"):
                 result = fill(raw, m, rec, plan, lib)
             st.session_state.fill_result = result
@@ -398,6 +414,10 @@ def tab_fill() -> None:
         return
     r = res.report
     st.success("Immutability gate passed. Every byte outside the approved regions is identical to the template.")
+    if st.session_state.audit:
+        sm = st.session_state.audit["summary"]
+        st.caption(f"Model draft: {sm['accepted']}/{sm['claims']} claims verified, "
+                   f"{sm['declared_gaps']} gaps declared by the model. Details and the plan are in tab 4.")
     a, b, c, d = st.columns(4)
     a.metric("Regions", len(r["regions"]))
     b.metric("Gaps", len(r["gaps"]))

@@ -41,7 +41,7 @@ def test_demo_approve_fill_without_plan(app: AppTest) -> None:
     m = Manifest.model_validate_json(ss["manifest_text"])
     assert m.approval is not None and m.approval.approved_by == "Template Owner (QA)"
 
-    _buttons(app)["Fill document"].click().run()
+    _buttons(app)["Fill with current plan"].click().run()
     assert not app.exception and not list(app.error)
     report = ss["fill_result"].report
     status = {r["id"]: r["status"] for r in report["regions"]}
@@ -63,7 +63,7 @@ def test_fill_with_hand_written_plan(app: AppTest) -> None:
     app.run()
     assert not app.exception
 
-    _buttons(app)["Fill document"].click().run()
+    _buttons(app)["Fill with current plan"].click().run()
     assert not app.exception and not list(app.error)
     report = ss["fill_result"].report
     status = {r["id"]: r["status"] for r in report["regions"]}

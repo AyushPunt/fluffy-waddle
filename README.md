@@ -1,8 +1,7 @@
 # regulated-doc-agent
 
-The template engine for the AI authoring agent for regulated documents. This is phase 1 of the
-[system design plan](https://claude.ai/artifact/Y9ZnqefWR1gAyJ9ptsgqz7): region compiler, manifest
-approval, byte-splicing writer, immutability gate and the code fillers. The LLM pipeline (phases 2 and 3)
+The template engine for the AI authoring agent for regulated documents. region compiler, manifest
+approval, byte-splicing writer, immutability gate and the code fillers. The LLM pipeline
 plugs in by producing a fill plan.
 
 ## Guarantees
